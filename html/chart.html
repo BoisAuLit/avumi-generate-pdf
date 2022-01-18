@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+    <link rel="stylesheet" href="chart.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0-rc"></script>
+    <script>
+      Chart.register(ChartDataLabels);
+      const fileServerUrl = 'http://localhost:8080/';
+      const MILLIS_IN_ONE_DAY = 24 * 60 * 60 * 1000;
+      const MILLIS_IN_ONE_WEEK = 7 * MILLIS_IN_ONE_DAY;
+      const MILLIS_IN_ONE_MONTH = 30 * MILLIS_IN_ONE_DAY;
+      const MILLIS_IN_SIX_MONTHS = 180 * MILLIS_IN_ONE_DAY;
+      const BAR_CHART_PIE_CHART_SHARED_OPTIONS = {
+        options: {
+          plugins: {
+            legend: {
+              labels: {
+                boxWidth: 0,
+                font: {
+                  size: 20,
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              ticks: {
+                font: {
+                  size: 20,
+                  family: "vazir",
+                },
+              },
+            },
+            y: {
+              ticks: {
+                font: {
+                  size: 20,
+                  family: "vazir",
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const groupBy = (x, f) =>
+        x.reduce((a, b) => ((a[f(b)] ||= []).push(b), a), {});
+
+      async function csvToJson(filePath) {
+        const textLines = await fetch(fileServerUrl + filePath).then((response) =>
+          response.text()
+        );
+        const [headerLine, ...dataLines] = textLines
+          .split("\n")
+          .filter((line) => line.trim().length !== 0);
+
+        const headerColumns = headerLine.split(",");
+        return dataLines.map((line) => {
+          const dataColumns = line.split(",");
+          const dataObj = {};
+          for (let i = 0; i < dataColumns.length; i++) {
+            dataObj[headerColumns[i]] = dataColumns[i];
+          }
+          return dataObj;
+        });
+      }
+
+      async function getDatesGroupByInterval(
+        dates,
+        periodAgo,
+        interval,
+        initialKeys
+      ) {
+        const orderedDate = dates.sort((a, b) => b - a);
+        const beginDate = orderedDate[0] - periodAgo;
+        const filteredDates = dates.filter((d) => d > beginDate);
+        const mapDateToIntervals = (date) =>
+          Math.ceil((date - beginDate) / interval);
+        const intervals = filteredDates.map(mapDateToIntervals);
+        const groupByIntervals = groupBy(intervals, (d) => d);
+        const initialData = Object.fromEntries(
+          initialKeys.split("").map((digit) => [digit, 0])
+        );
+        Object.entries(groupByIntervals).forEach(
+          ([intervals, array]) => (initialData[intervals] = array.length)
+        );
+        return [Object.keys(initialData), Object.values(initialData)];
+      }
+
+      async function getTryOnsData() {
+        const tryOnsData = await csvToJson("try_ons.csv");
+        const orderedDates = tryOnsData
+          .map((obj) => obj.Date)
+          .map((dateString) => new Date(dateString).getTime())
+          .sort((a, b) => b - a);
+        return await getDatesGroupByInterval(
+          orderedDates,
+          7 * MILLIS_IN_ONE_DAY,
+          MILLIS_IN_ONE_DAY,
+          "1234567"
+        );
+      }
+
+      async function getApiCallsData() {
+        const tryOnsData = await csvToJson("api_calls.csv");
+        const orderedDates = tryOnsData
+          .map((obj) => obj.Date)
+          .map((dateString) => new Date(dateString).getTime())
+          .sort((a, b) => b - a);
+        return await getDatesGroupByInterval(
+          orderedDates,
+          6 * MILLIS_IN_SIX_MONTHS,
+          MILLIS_IN_ONE_MONTH,
+          "1234566"
+        );
+      }
+
+      async function groupByColumn(filePath, columnName) {
+        const dataFromFile = await csvToJson(filePath);
+        const retrieveColumn = dataFromFile.map((obj) => obj[columnName]);
+        const dataGroupByColumn = groupBy(retrieveColumn, (d) => d);
+        const sorted = Object.entries(dataGroupByColumn)
+          .map(([key, array]) => [key, array.length])
+          .sort(([key1, count1], [key2, count2]) => count1 - count2);
+        return [
+          sorted.map((entry) => entry[0]),
+          sorted.map((entry) => entry[1]),
+        ];
+      }
+
+      async function getUserRolesData() {
+        return groupByColumn("users_roles.csv", "UserType");
+      }
+
+      async function getUsersAgeData() {
+        return groupByColumn("users_age.csv", "AgeGroup");
+      }
+
+      async function drawTrysOnChart() {
+        const [headers, dataColumns] = await getTryOnsData();
+        const labels = headers;
+        const data = {
+          labels: labels,
+          datasets: [
+            {
+              label: "Try-ons over seven days",
+              data: dataColumns,
+              backgroundColor: Array(dataColumns.length).fill(
+                "rgba(255, 99, 132, 0.8)"
+              ),
+              borderColor: Array(dataColumns.length).fill("255, 99, 132"),
+              borderWidth: 1,
+            },
+          ],
+        };
+        const config = {
+          type: "bar",
+          data: data,
+          options: {animation: {
+            duration: 0
+          }},
+          ...BAR_CHART_PIE_CHART_SHARED_OPTIONS,
+        };
+
+        const ctx = document.getElementById("try-ons-over-seven-days");
+        const myChart = new Chart(ctx, config);
+      }
+
+      async function drawApiCallsChart() {
+        const [headers, dataColumns] = await getTryOnsData();
+        const labels = headers;
+
+        const data = {
+          labels: labels,
+          datasets: [
+            {
+              label: "API Calls Over six months",
+              data: dataColumns,
+              fill: false,
+              borderColor: "rgb(75, 192, 192)",
+              tension: 0.1,
+            },
+          ],
+        };
+
+        const config = {
+          type: "line",
+          data: data,
+          options: {animation: {
+            duration: 0
+          }},
+          ...BAR_CHART_PIE_CHART_SHARED_OPTIONS,
+        };
+
+        const ctx = document.getElementById("api-calls-over-six-months");
+        const myChart = new Chart(ctx, config);
+      }
+
+      async function drawPieChart(headers, dataColumns, title, divId) {
+        const data = {
+          labels: headers,
+          datasets: [
+            {
+              label: title,
+              data: dataColumns,
+              backgroundColor: [
+                "rgba(255, 99, 132, 0.8)",
+                "rgba(255, 159, 64, 0.8)",
+                "rgba(255, 205, 86, 0.8)",
+                "rgba(75, 192, 192, 0.8)",
+                "rgba(54, 162, 235, 0.8)",
+                "rgba(153, 102, 255, 0.8)",
+                "rgba(201, 203, 207, 0.8)",
+              ],
+              hoverOffset: 4,
+            },
+          ],
+        };
+
+        const config = {
+          type: "pie",
+          data: data,
+          options: {animation: {
+            duration: 0
+          }},
+        };
+        const ctx = document.getElementById(divId);
+        const myChart = new Chart(ctx, config);
+      }
+
+      async function drawUserRolesChart() {
+        const [headers, dataColumns] = await getUserRolesData();
+        drawPieChart(
+          headers,
+          dataColumns,
+          "Users roles pie chart",
+          "users-by-role"
+        );
+      }
+
+      async function drawUserAgesChart() {
+        const [headers, dataColumns] = await getUsersAgeData();
+        drawPieChart(
+          headers,
+          dataColumns,
+          "Users ages pie chart",
+          "users-by-age"
+        );
+      }
+
+      document.addEventListener("DOMContentLoaded", async function () {
+        drawTrysOnChart();
+        drawApiCallsChart();
+        drawUserRolesChart();
+        drawUserAgesChart();
+      });
+    </script>
+  </head>
+  <body>
+    <!-- <div>
+      <canvas id="myChart"></canvas>
+    </div> -->
+
+    <div class="container" id="north-west">
+      <canvas class="canvas" id="try-ons-over-seven-days"></canvas>
+    </div>
+
+    <div class="container" id="north-east">
+      <canvas class="canvas" id="api-calls-over-six-months"></canvas>
+    </div>
+
+    <div class="container" id="south-west">
+      <canvas class="canvas" id="users-by-role"></canvas>
+    </div>
+
+    <div class="container" id="south-east">
+      <canvas class="canvas" id="users-by-age"></canvas>
+    </div>
+  </body>
+</html>
